@@ -33,6 +33,19 @@ int wmain(int count, wchar_t** args) {
       value(L"REA_\u00df") == expectedSharp && value(L"REA_SS") == L"double" ? "true" : "false");
     return 0;
   }
+  if (count == 2 && std::wstring(args[1]) == L"affinity") {
+    // A mask is comparable only between processes in the same single processor
+    // group, so the observed group is reported alongside it.
+    DWORD_PTR affinity = 0, systemAffinity = 0;
+    if (!GetProcessAffinityMask(GetCurrentProcess(), &affinity, &systemAffinity)) return 8;
+    USHORT groupCount = 1;
+    USHORT groups[1]{};
+    const bool single = GetProcessGroupAffinity(GetCurrentProcess(), &groupCount, groups) && groupCount == 1;
+    std::printf("{\"affinityMask\":%llu,\"singleProcessorGroup\":%s,\"processorGroup\":%u}\n",
+                static_cast<unsigned long long>(affinity), single ? "true" : "false",
+                single ? static_cast<unsigned>(groups[0]) : 0u);
+    return 0;
+  }
   if (count == 4 && std::wstring(args[1]) == L"reparse-directory") {
     // Only the conformance lane's disposable, nonempty source directory is used.
     const auto substitute = L"\\??\\" + std::wstring(args[3]);

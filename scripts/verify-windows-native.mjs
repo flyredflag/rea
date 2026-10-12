@@ -629,6 +629,30 @@ setInterval(()=>{},1000);\n`,
       unicodeNamesPreserved: true,
     });
     report.processes.windowsEnvironmentSemantics = true;
+    const callerAffinity = JSON.parse(
+      execFileSync(boundaryFixture, ["affinity"], { encoding: "utf8" }),
+    );
+    const affinityChild = native.call("process_spawn", [
+      boundaryFixture,
+      `${quote(boundaryFixture)} affinity`,
+      workspace,
+      environment,
+    ]);
+    const observedAffinity = await wait(affinityChild);
+    native.call("process_close", [affinityChild.handle]);
+    assert.equal(observedAffinity.exitCode, 0);
+    const childAffinity = JSON.parse(observedAffinity.output);
+    // Masks are comparable only within one processor group. A child Windows
+    // placed in another group keeps that group's default affinity, and the
+    // spawn itself must still succeed, which the exit code above observes.
+    if (
+      callerAffinity.singleProcessorGroup &&
+      childAffinity.singleProcessorGroup &&
+      callerAffinity.processorGroup === childAffinity.processorGroup
+    )
+      assert.equal(childAffinity.affinityMask, callerAffinity.affinityMask);
+    report.processes.callerAffinityPreservedWithinProcessorGroup = true;
+    report.callerAffinity = callerAffinity;
   }
   const ownerFixture = join(workspace, "owner.mjs");
   const ownerPidFile = join(workspace, "crash-child.pid");

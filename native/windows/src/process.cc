@@ -68,6 +68,17 @@ static ULONGLONG jobMemoryLimit(napi_env env, napi_value value) {
   return limit;
 }
 
+// A caller affinity mask names processors relative to one processor group, so a
+// comparable child must occupy exactly one group too. A process whose threads
+// span groups, or whose membership cannot be read, has no single group.
+static bool singleProcessorGroup(HANDLE process, USHORT& group) {
+  USHORT count = 1;
+  std::array<USHORT, 1> groups{};
+  if (!GetProcessGroupAffinity(process, &count, groups.data()) || count != 1) return false;
+  group = groups[0];
+  return true;
+}
+
 static void pipe(Handle& read, Handle& write, bool parentReads = true) {
   SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
   HANDLE rawRead, rawWrite;
@@ -168,10 +179,17 @@ std::unique_ptr<Process> spawnProcess(const std::wstring& command, const std::ws
   TOKEN_OWNER owner{reinterpret_cast<TOKEN_USER*>(tokenUser.data())->User.Sid};
   require(SetTokenInformation(token.get(), TokenOwner, &owner, sizeof(owner)),
           "Set suspended process file owner failed", command);
+  // Windows assigns each new process to a processor group of its own choosing,
+  // and a mask is rejected unless its processors belong to the target's group.
+  // Caller affinity is therefore preserved only when both occupy the same
+  // single group; a child placed in another group keeps that group's default
+  // affinity instead of failing the spawn.
   DWORD_PTR affinity = 0, systemAffinity = 0;
   require(GetProcessAffinityMask(GetCurrentProcess(), &affinity, &systemAffinity),
           "Read caller process affinity failed", command);
-  if (affinity != 0)
+  USHORT callerGroup = 0, childGroup = 0;
+  if (affinity != 0 && singleProcessorGroup(GetCurrentProcess(), callerGroup) &&
+      singleProcessorGroup(result->process.get(), childGroup) && callerGroup == childGroup)
     require(SetProcessAffinityMask(result->process.get(), affinity), "Preserve caller process affinity failed", command);
   const DWORD priority = GetPriorityClass(GetCurrentProcess());
   require(priority != 0 && SetPriorityClass(result->process.get(), priority),
