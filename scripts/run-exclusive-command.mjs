@@ -71,12 +71,20 @@ async function run() {
 
 function runCommand() {
   return new Promise((resolveResult, reject) => {
-    child = spawn(command[0], command.slice(1), {
-      cwd: process.cwd(),
-      env: process.env,
-      shell: process.platform === "win32",
-      stdio: "inherit",
-    });
+    // Node entrypoints accept argv directly; a Windows shell would reinterpret
+    // caller-selected paths. Keep shell dispatch only for other command shims.
+    const nodeCommand =
+      command[0] === "node" || command[0] === process.execPath;
+    child = spawn(
+      nodeCommand ? process.execPath : command[0],
+      command.slice(1),
+      {
+        cwd: process.cwd(),
+        env: process.env,
+        shell: process.platform === "win32" && !nodeCommand,
+        stdio: "inherit",
+      },
+    );
     child.once("error", reject);
     child.once("close", (code) => {
       // During POSIX cancellation the group leader must stay alive, retaining

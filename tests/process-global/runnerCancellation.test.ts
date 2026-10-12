@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readFile, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { expect, it } from "vitest";
@@ -10,6 +11,29 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const runnerPath = fileURLToPath(
   new URL("../../scripts/run-exclusive.mjs", import.meta.url),
+);
+
+it.each(["node", process.execPath])(
+  "preserves literal Node arguments through the lock wrapper (%s)",
+  async (command) => {
+    const directory = await createTestTempDirectory("rea-runner-argv-");
+    const entry = join(directory, "capture & arguments.mjs");
+    await writeFile(
+      entry,
+      "console.log(JSON.stringify(process.argv.slice(2)))",
+    );
+    const arguments_ = [
+      "C:\\Users\\Jane Doe\\node runtime",
+      "E:\\便携包 & archive\\",
+      "%PATH% ^ (literal) !",
+    ];
+    const result = await promisify(execFile)(
+      process.execPath,
+      [runnerPath, "test", command, entry, ...arguments_],
+      { cwd: directory, timeout: 10_000 },
+    );
+    expect(JSON.parse(result.stdout)).toEqual(arguments_);
+  },
 );
 
 it.runIf(process.platform !== "win32")(
