@@ -22,6 +22,14 @@ const WINDOWS_INSTALL = "C:\\tools\\ghidra_12.1.4_PUBLIC";
 const WINDOWS_PROPERTIES = `${WINDOWS_INSTALL}\\Ghidra\\application.properties`;
 const WINDOWS_HEADLESS = `${WINDOWS_INSTALL}\\support\\analyzeHeadless.bat`;
 const WINDOWS_DECOMPILER = `${WINDOWS_INSTALL}\\Ghidra\\Features\\Decompiler\\os\\win_x86_64\\decompile.exe`;
+
+const { mockSpawnSync } = vi.hoisted(() => ({ mockSpawnSync: vi.fn() }));
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawnSync: mockSpawnSync,
+}));
+
 const JAVA: GhidraJavaObservation = {
   version: "21.0.11",
   major: SUPPORTED_GHIDRA_JAVA_MAJOR,
@@ -43,7 +51,40 @@ const host = (
   ...overrides,
 });
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  mockSpawnSync.mockReset();
+});
+
+it("forces UTF-8 for Java property probes on Windows", () => {
+  mockSpawnSync.mockReturnValue({
+    pid: 1,
+    output: ["", "", ""],
+    stdout:
+      "    java.version = 21.0.11\n" +
+      "    java.home = C:\\Users\\Réa\\JDK 21\n" +
+      "    sun.arch.data.model = 64\n",
+    stderr: "",
+    status: 0,
+    signal: null,
+  });
+
+  const inspection = inspectGhidraInstallation({
+    environment: {},
+    javaHome: "C:\\Users\\Réa\\JDK 21",
+    platform: "win32",
+    architecture: "x64",
+  });
+
+  expect(inspection.javaHome).toBe("C:\\Users\\Réa\\JDK 21");
+  expect(mockSpawnSync).toHaveBeenCalledOnce();
+  expect(mockSpawnSync.mock.calls[0]?.[1]).toEqual(
+    expect.arrayContaining([
+      "-Dstdout.encoding=UTF-8",
+      "-Dstderr.encoding=UTF-8",
+    ]),
+  );
+});
 
 it("probes the selected Java environment without reading conflicting ambient settings", () => {
   vi.stubEnv("REA_GHIDRA_CONTEXT", "ambient");
