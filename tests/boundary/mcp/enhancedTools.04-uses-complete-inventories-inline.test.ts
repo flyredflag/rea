@@ -142,6 +142,7 @@ describe("enhanced MCP tools", () => {
     );
     expect(result).toEqual({
       document: "fixture",
+      image_base: null,
       segments: [
         { name: "__TEXT", start: "0x1000", end: "0x1800", length: 2048 },
         { name: "__DATA", start: "0x1800", end: "0x2000", length: 2048 },

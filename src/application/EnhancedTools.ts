@@ -532,14 +532,33 @@ export class EnhancedTools {
     const stringCount = parseListCount(stringsResult.value, "strings");
     if (!stringCount.ok) return stringCount;
 
+    // The first segment need not start at the provider's loaded image base.
+    const imageBases = new Set(
+      segments.value.flatMap((segment) =>
+        segment.image_base === undefined ? [] : [segment.image_base],
+      ),
+    );
+    if (imageBases.size > 1)
+      return err(
+        new AnalysisOutputError(
+          "binary_overview",
+          "provider reported conflicting loaded image bases",
+        ),
+      );
+
     return ok({
       document: document.value,
-      segments: segments.value.map(({ name, start, end }) => ({
-        name,
-        start,
-        end,
-        length: addressDistance(start, end),
-      })),
+      image_base: imageBases.values().next().value ?? null,
+      segments: segments.value.map(
+        ({ name, start, end, image_base, address_space }) => ({
+          name,
+          start,
+          end,
+          length: addressDistance(start, end),
+          ...(image_base === undefined ? {} : { image_base }),
+          ...(address_space === undefined ? {} : { address_space }),
+        }),
+      ),
       segment_count: segments.value.length,
       procedure_count: procedureCount.value,
       string_count: stringCount.value,

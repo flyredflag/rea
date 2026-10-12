@@ -822,6 +822,18 @@ specifications, independent mappings, unchanged bytes, and decompilation of a
 known return value. AArch64 remains covered by deterministic tests rather than
 this real-provider lane. See [raw binary analysis](raw-binary.md).
 
+`npm run verify:ghidra:address-context` runs on Linux with a caller-installed
+Ghidra, full JDK, and an x86-64 ELF GCC toolchain (`CC` selects another compatible
+compiler). It builds
+`tests/conformance/c/pie-address-context.c` as a PIE ELF without executing it.
+The compiled CLI and real stdio MCP workflow must expose the measured image
+base, retain segment address spaces, agree on the overview, reject the original
+ELF entry with actionable guidance, and decompile the observed loaded entry.
+The verifier compares mapped bytes with the source file and checks source
+identity, session preservation after failed lookup, owned runtime cleanup, and
+verified empty process lineage. This lane does not establish Windows or macOS
+real-provider coverage.
+
 ## Apple Interface Builder archives
 
 `npm run verify:interface-builder` compiles the source-owned AppKit XIB into a

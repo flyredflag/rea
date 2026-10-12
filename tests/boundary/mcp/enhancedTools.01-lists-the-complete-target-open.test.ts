@@ -344,6 +344,7 @@ describe("enhanced MCP tools", () => {
     expect(results[6]).toMatchObject({
       document: "fixture",
       segment_count: 1,
+      image_base: null,
       procedure_count: 6,
       string_count: 1,
     });

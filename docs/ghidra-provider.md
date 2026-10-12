@@ -41,6 +41,49 @@ does not prove text is absent. Both list and search Evidence carry this
 limitation. When an address is known, use `read_bytes` and `xrefs` to inspect
 bytes and references.
 
+## Loaded addresses and file offsets
+
+`rea analyze <path> --provider ghidra --json` and MCP `binary_overview` report
+the observed loaded `image_base` in `normalized_result`. They retain each
+segment's reported `image_base` and `address_space`. A provider that does not
+report a base produces `image_base: null`; REA does not substitute zero or the
+first segment's address. Conflicting reported bases fail explicitly.
+
+`decompile`, `function`, and MCP procedure selectors use procedure names or
+provider analysis addresses. ELF virtual addresses and file offsets are
+different coordinates. Ghidra can rebase a PIE ELF during import: in the
+source-owned verification fixture, ELF entry `0x1013` becomes Ghidra procedure
+`0x101013` with image base `0x100000`. That example is not a general conversion
+rule.
+
+Use `list_procedures` to select an observed procedure address. To relate file
+bytes to loaded memory, call MCP `inspect_native_load_image` or:
+
+```sh
+rea inspect-native-load-image <path> --provider ghidra --json
+rea decompile <path> <observed-procedure-address> --provider ghidra --json
+```
+
+The load-image result preserves source-file indexes, file offsets, address
+spaces, and inclusive mapping ranges. Follow the mapping for the selected
+source file and region; adding `image_base` to an arbitrary file offset is not
+valid. For a linear byte-addressed, file-backed mapping, a file offset `F` in
+`[mapping.file_offset, mapping.file_offset + mapping.length)` maps to
+`mapping.start + (F - mapping.file_offset)` in the reported `address_space`.
+If several mappings cover the same file offset, keep those candidates distinct
+and select the procedure from the observed inventory. Uninitialized regions may
+have no file backing. ELF mappings are observed
+without independent format-specific load-image verification, as the result's
+status and limitations state.
+
+An unsuccessful numeric procedure lookup reports the current Ghidra image base
+and points to the procedure inventory and source mappings. It never retries by
+reinterpreting the selector as a file offset.
+
+Overview workflow revision 3 binds this output to snapshot identity. Older
+serialized overview Evidence remains readable; it is not replayed as a current
+overview merely because its source artifact is unchanged.
+
 ## Admitted function-analysis semantics
 
 | Concern                 | Ghidra contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
