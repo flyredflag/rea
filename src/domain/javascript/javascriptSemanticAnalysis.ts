@@ -99,6 +99,7 @@ interface AddBindingInput {
   readonly definitionNode: t.Node;
   readonly initializer: t.Node | null;
   readonly directOrigin?: JavaScriptModuleOrigin;
+  readonly runtimeImport?: boolean;
   readonly projection?: readonly (string | number | null)[];
 }
 
@@ -992,6 +993,12 @@ const bindImports = (
       definitionNode: specifier.local,
       initializer: null,
       directOrigin: { specifier: node.source.value, importedPath },
+      runtimeImport:
+        node.importKind !== "type" &&
+        node.importKind !== "typeof" &&
+        (!t.isImportSpecifier(specifier) ||
+          (specifier.importKind !== "type" &&
+            specifier.importKind !== "typeof")),
     });
   }
 };
@@ -1168,6 +1175,7 @@ const addBinding = (input: AddBindingInput): void => {
     definitionNode,
     initializer,
     directOrigin,
+    runtimeImport,
     projection = [],
   } = input;
   let binding = scope.bindings.get(name);
@@ -1182,6 +1190,7 @@ const addBinding = (input: AddBindingInput): void => {
   if (initializer !== null)
     binding.initializers.push({ node: initializer, projection });
   if (directOrigin !== undefined) binding.directOrigins.push(directOrigin);
+  binding.runtimeImport ||= runtimeImport === true;
 };
 
 const createBinding = (
@@ -1201,6 +1210,7 @@ const createBinding = (
   initializers: [],
   referenceInitializers: [],
   directOrigins: [],
+  runtimeImport: false,
 });
 
 const addAssignment = (

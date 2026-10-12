@@ -43,6 +43,8 @@ export interface JavaScriptSemanticBindingState {
   readonly initializers: JavaScriptSemanticInitializer[];
   readonly referenceInitializers: JavaScriptSemanticReferenceInitializer[];
   readonly directOrigins: JavaScriptModuleOrigin[];
+  /** An ECMAScript import that exists at runtime, excluding type-only and import-equals syntax. */
+  runtimeImport: boolean;
 }
 
 /** Mutable lexical-scope state used only during AST recovery. */

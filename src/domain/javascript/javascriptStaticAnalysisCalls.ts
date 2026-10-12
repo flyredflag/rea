@@ -1,5 +1,6 @@
 import * as t from "@babel/types";
 
+import { htmlUrlText, stripQueryAndFragment } from "../artifactPathSyntax.js";
 import { sanitizeEndpointCandidate } from "../browserObservation.js";
 import {
   addFindingOnce,
@@ -7,9 +8,11 @@ import {
 } from "./javascriptStaticAnalysisFindings.js";
 import {
   STATIC_ROUTE_CALL_NAMES,
+  argumentNode,
   argumentValue,
   calleeName,
   endpointArgument as endpointArgumentHelper,
+  isImportMetaUrl,
   prefixedArgument,
   range,
   rangeForOffsets,
@@ -19,13 +22,21 @@ import {
   storageKind,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyName,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import type {
   JavaScriptAnalysisAccumulator as AnalysisAccumulator,
   JavaScriptEndpointInput as EndpointInput,
   JavaScriptFindingContext as FindingContext,
   JavaScriptReferenceInput as ReferenceInput,
 } from "./javascriptStaticAnalysisState.js";
+import {
+  isUnshadowedGlobal,
+  resolveSemanticBindingState,
+  type JavaScriptSemanticAnalysisState,
+} from "./javascriptSemanticState.js";
 
 type JavaScriptCallLike =
   | t.CallExpression
@@ -37,6 +48,7 @@ export const inspectCall = (
   source: string,
   node: JavaScriptCallLike,
   context: FindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
 ): void => {
   const { accumulator } = context;
   const name = calleeName(node.callee);
@@ -60,7 +72,11 @@ export const inspectCall = (
   for (const specifier of vitePreloadDependencySpecifiers(source, node, name))
     addReference(context, { node, kind: "dynamic-import", specifier });
   if (name === "Worker" || name.endsWith(".Worker"))
-    addReference(context, { node, kind: "worker", specifier: first });
+    addReference(context, {
+      node,
+      kind: "worker",
+      specifier: first ?? workerUrlSpecifier(node, bindings),
+    });
   if (name.endsWith("serviceWorker.register"))
     addReference(context, { node, kind: "service-worker", specifier: first });
   inspectEndpointCall(node, name, first, context);
@@ -95,6 +111,74 @@ export const inspectCall = (
         location: range(node),
       },
     });
+};
+
+const workerUrlSpecifier = (
+  worker: JavaScriptCallLike,
+  bindings: JavaScriptSemanticAnalysisState,
+): string | undefined => {
+  if (
+    !t.isNewExpression(worker) ||
+    !isWorkerConstructor(worker.callee, bindings)
+  )
+    return undefined;
+  const argumentExpression = argumentNode(worker.arguments[0]);
+  if (argumentExpression === undefined) return undefined;
+  const node = unwrapJavaScriptExpression(argumentExpression).node;
+  if (
+    !t.isNewExpression(node) ||
+    !isUnshadowedGlobal(
+      unwrapJavaScriptExpression(node.callee).node,
+      bindings,
+      "URL",
+    ) ||
+    !isImportMetaUrl(argumentNode(node.arguments[1]))
+  )
+    return undefined;
+  const specifier = stringValue(node.arguments[0]);
+  if (specifier === undefined) return undefined;
+  const pathname = stripQueryAndFragment(specifier);
+  // Keep paths requiring normalization or the source-file base explicit as
+  // expressions. Normalization confined to a URL suffix does not change its file.
+  return pathname.length > 0 &&
+    stripQueryAndFragment(htmlUrlText(specifier)) === pathname
+    ? specifier
+    : undefined;
+};
+
+const isWorkerConstructor = (
+  callee: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const node = unwrapJavaScriptExpression(callee).node;
+  const member =
+    t.isMemberExpression(node) &&
+    semanticStaticPropertyName(node.property, node.computed) === "Worker";
+  const root = unwrapJavaScriptExpression(member ? node.object : node).node;
+  if (!t.isIdentifier(root)) return false;
+  if (
+    member
+      ? ["globalThis", "window", "self"].some((name) =>
+          isUnshadowedGlobal(root, bindings, name),
+        )
+      : isUnshadowedGlobal(root, bindings, "Worker")
+  )
+    return true;
+  const binding = resolveSemanticBindingState(bindings, root, root.name);
+  const [origin] = binding?.directOrigins ?? [];
+  // Named ESM exports and module namespace exports are read-only. Default
+  // imports and CommonJS objects can replace Worker, so their identity is unknown.
+  return (
+    binding?.runtimeImport === true &&
+    binding.definitions.length === 1 &&
+    binding.directOrigins.length === 1 &&
+    origin !== undefined &&
+    (origin.specifier === "worker_threads" ||
+      origin.specifier === "node:worker_threads") &&
+    (member
+      ? origin.importedPath.length === 0
+      : origin.importedPath.length === 1 && origin.importedPath[0] === "Worker")
+  );
 };
 
 // Element factories such as jsx("audio", props) and createElement("video",
