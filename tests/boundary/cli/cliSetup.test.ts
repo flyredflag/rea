@@ -1,11 +1,13 @@
 import { execFile } from "node:child_process";
-import { rm } from "node:fs/promises";
+import { access, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { spawn } from "@lydell/node-pty";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { CLIENT_LOCATION_ENVIRONMENT } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
@@ -277,6 +279,117 @@ describe("interactive setup completion", () => {
     },
   );
 });
+
+describe("non-interactive setup in a terminal", () => {
+  it("shows the dry-run plan without applying it", async () => {
+    await withTerminalSetup(
+      ["--dry-run", "--client", "codex", "--skill=false"],
+      async ({ output, exitCode, home }) => {
+        const config = join(home, ".codex", "config.toml");
+        expect(exitCode).toBe(0);
+        expect(output).toContain("Planned changes (dry run)");
+        expect(output).toContain(config);
+        expect(output).toContain("Dry run: no changes were made.");
+        await expect(access(config)).rejects.toThrow();
+      },
+    );
+  }, 60_000);
+
+  it("explains how to choose agents when a dry run has no scope", async () => {
+    await withTerminalSetup(["--dry-run"], ({ output, exitCode }) => {
+      expect(exitCode).toBe(0);
+      expect(output).toContain("No changes planned for the selected scope.");
+      expect(output).toContain("--client <name>");
+      expect(output).toContain("Dry run: no changes were made.");
+    });
+  }, 60_000);
+
+  it("shows manual setup instructions for a dry run without file changes", async () => {
+    await withTerminalSetup(
+      ["--dry-run", "--client", "grok_bot", "--skill=false"],
+      ({ output, exitCode }) => {
+        expect(exitCode).toBe(0);
+        expect(output).toContain("No changes planned for the selected scope.");
+        expect(output).toContain("Grok Bot keeps connectors");
+        expect(output).not.toContain("--client <name>");
+      },
+    );
+  }, 60_000);
+
+  it("summarizes an approved setup", async () => {
+    await withTerminalSetup(
+      ["--yes", "--client", "codex", "--skill=false"],
+      async ({ output, exitCode, home }) => {
+        expect(exitCode).toBe(0);
+        expect(output).toContain("Restart Codex to load REA.");
+        await expect(
+          access(join(home, ".codex", "config.toml")),
+        ).resolves.toBeUndefined();
+      },
+    );
+  }, 60_000);
+});
+
+interface TerminalSetupRun {
+  readonly output: string;
+  readonly exitCode: number;
+  readonly home: string;
+}
+
+/** Drop the developer's client locations so setup resolves only the temporary home. */
+const isolatedClientEnvironment = (): NodeJS.ProcessEnv => {
+  const environment = { ...process.env };
+  for (const name of CLIENT_LOCATION_ENVIRONMENT) delete environment[name];
+  return environment;
+};
+
+/** Run the public setup command under a real pseudo-terminal in an isolated home. */
+const withTerminalSetup = async (
+  args: readonly string[],
+  assert: (run: TerminalSetupRun) => void | Promise<void>,
+): Promise<void> => {
+  const home = await createTestTempDirectory("rea-cli-setup-terminal-");
+  try {
+    const { output, exitCode } = await new Promise<{
+      output: string;
+      exitCode: number;
+    }>((resolvePromise, reject) => {
+      let output = "";
+      const terminal = spawn(
+        process.execPath,
+        ["scripts/rea.mjs", "setup", ...args],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...isolatedClientEnvironment(),
+            HOME: home,
+            USERPROFILE: home,
+            XDG_CONFIG_HOME: join(home, ".config"),
+            NO_COLOR: "1",
+            TERM: "xterm-256color",
+          },
+          name: "xterm-256color",
+          cols: 400,
+          rows: 60,
+        },
+      );
+      const timeout = setTimeout(() => {
+        terminal.kill();
+        reject(new Error(`Timed out after output:\n${output}`));
+      }, 50_000);
+      terminal.onData((data) => {
+        output += data;
+      });
+      terminal.onExit(({ exitCode }) => {
+        clearTimeout(timeout);
+        resolvePromise({ output, exitCode });
+      });
+    });
+    await assert({ output, exitCode, home });
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+};
 
 interface JourneyStep {
   readonly prompt: string;

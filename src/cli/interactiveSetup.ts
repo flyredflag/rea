@@ -82,6 +82,38 @@ export const renderSetupProgress = (event: SetupProgressEvent): void => {
   writeLine(`${symbol}  ${event.label}${suffix}`);
 };
 
+/**
+ * Summarize a non-interactive setup for a terminal. The `setup` command's
+ * agent-only output policy hides the structured result there, so `--dry-run`
+ * and `--yes` would otherwise finish without any human-visible outcome.
+ */
+export const renderTerminalSetupSummary = (
+  result: SetupResult,
+  scopeSelected: boolean,
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
+): void => {
+  if (result.status !== "planned") {
+    renderInteractiveSetupResult(result, environment);
+    return;
+  }
+  if (result.plannedActions.length === 0) {
+    writeLine("◆  No changes planned for the selected scope.");
+    if (!scopeSelected)
+      writeLine(
+        "│  Choose agents with --client <name> (repeatable) or --all-detected.",
+      );
+  } else {
+    renderPreflight(result.plannedActions, "Planned changes (dry run)");
+  }
+  if (result.remediation !== undefined) writeLine(`!  ${result.remediation}`);
+  outro(
+    result.plannedActions.length === 0
+      ? "Dry run: no changes were made."
+      : "Dry run: no changes were made. Run the same command without --dry-run to apply.",
+    promptStreams,
+  );
+};
+
 /** Finish an interactive setup journey without exposing the full doctor catalog. */
 export const renderInteractiveSetupResult = (
   result: SetupResult,
@@ -275,9 +307,12 @@ const humanList = (values: readonly string[]): string => {
   return `${values.slice(0, -1).join(", ")}, and ${values.at(-1)}`;
 };
 
-const renderPreflight = (actions: readonly SetupAction[]): void => {
+const renderPreflight = (
+  actions: readonly SetupAction[],
+  heading = "Ready to review",
+): void => {
   writeLine("│");
-  writeLine("◆  Ready to review");
+  writeLine(`◆  ${heading}`);
   for (const action of actions) {
     writeLine("│");
     writeLine(`│  ${action.operation.toUpperCase()}  ${action.label}`);
