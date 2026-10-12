@@ -8,6 +8,56 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
+  "managed CLI reports an out-of-file PE section as invalid input",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-managed-invalid-section-");
+    const path = join(root, "invalid-section.dll");
+    const bytes = buildManagedPeFixture();
+    const coff = bytes.readUInt32LE(0x3c) + 4;
+    const section = coff + 20 + bytes.readUInt16LE(coff + 16);
+    bytes.writeUInt32LE(bytes.length + 0x1000, section + 20);
+    await writeFile(path, bytes);
+
+    for (const command of [
+      "inspect-managed-artifact",
+      "inspect-managed-members",
+    ]) {
+      const result = await cli.run({ arguments: [command, path, "--json"] });
+      expect(result.exitCode, command).toBe(1);
+      expect.soft(result.json, command).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          operation: command.replaceAll("-", "_"),
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_format",
+              message: "pe.section-data leaves the artifact byte range",
+            },
+          ],
+        },
+      });
+    }
+
+    // Native-boundary inspection already retains malformed PE coverage.
+    const boundaries = await cli.run({
+      arguments: ["inspect-managed-native-boundaries", path, "--json"],
+    });
+    expect(boundaries.exitCode).toBe(0);
+    expect(boundaries.json).toMatchObject({
+      normalized_result: {
+        metadata: { status: "malformed" },
+        coverage: {
+          state: "unavailable",
+          issues: [expect.objectContaining({ scope: "pe.section-data" })],
+        },
+      },
+    });
+  },
+);
+
+cliTest(
   "managed CLI retains metadata and CIL after repeated local constructor owner lookups",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-managed-row-lookup-");

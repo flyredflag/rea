@@ -146,6 +146,7 @@ it("runs every managed static inspection independently of an active native targe
         coverage: { state: "partial" },
       },
     });
+    await verifyMalformedManagedInput(client, directory);
   } finally {
     await Promise.all([client.close(), server.close()]);
     await session.close();
@@ -196,6 +197,40 @@ it("opens a managed PE and executes the managed static provider through MCP", as
     await session.close();
   }
 }, 30_000);
+
+const verifyMalformedManagedInput = async (
+  client: Client,
+  directory: string,
+): Promise<void> => {
+  const malformedPath = join(directory, "invalid-section.dll");
+  const malformed = buildManagedPeFixture();
+  const coff = malformed.readUInt32LE(0x3c) + 4;
+  const section = coff + 20 + malformed.readUInt16LE(coff + 16);
+  malformed.writeUInt32LE(malformed.length + 0x1000, section + 20);
+  await writeFile(malformedPath, malformed);
+  for (const name of ["inspect_managed_artifact", "inspect_managed_members"]) {
+    const rejected = await client.callTool({
+      name,
+      arguments: { path: malformedPath },
+    });
+    expect.soft(parseMcpToolError(rejected)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          operation: name,
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_format",
+              message: "pe.section-data leaves the artifact byte range",
+            },
+          ],
+        },
+      },
+    });
+  }
+};
 
 const verifyManagedCatalogAndNativeWorkflow = async (
   client: Client,

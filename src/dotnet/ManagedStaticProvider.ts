@@ -22,6 +22,7 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
 } from "../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -37,6 +38,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
+import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 import { RegularFileCleanupFailure } from "../application/RegularFileRead.js";
 import {
   hashManagedSource,
@@ -135,11 +137,7 @@ class ManagedStaticClient implements AnalysisClient {
       if (cause instanceof AnalysisError) return err(cause);
       if (options?.signal?.aborted === true)
         return err(new AnalysisCancelledError(operation));
-      return err(
-        new ProviderAdapterError(MANAGED_STATIC_PROVIDER.id, operation, {
-          cause,
-        }),
-      );
+      return err(managedExecutionError(cause, operation));
     }
   }
 
@@ -170,6 +168,26 @@ class ManagedStaticClient implements AnalysisClient {
     );
   }
 }
+
+const managedExecutionError = (
+  cause: unknown,
+  operation: AnalysisOperation,
+): AnalysisError => {
+  if (
+    cause instanceof ManagedReaderFailure &&
+    cause.issue.code === "invalid-directory"
+  )
+    return new AnalysisInputError(operation, { cause }, [
+      {
+        path: ["path"],
+        reason: "invalid_format",
+        message: cause.issue.detail,
+      },
+    ]);
+  return new ProviderAdapterError(MANAGED_STATIC_PROVIDER.id, operation, {
+    cause,
+  });
+};
 
 const isCleanupFailure = (cause: unknown): boolean =>
   cause instanceof RegularFileCleanupFailure ||
