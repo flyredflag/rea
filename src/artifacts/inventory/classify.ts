@@ -1,10 +1,18 @@
-import { sameRegularFileState } from "../../filesystem/RegularFile.js";
+import {
+  sameRegularFileState,
+  verifyRegularFileState,
+  RegularFileChangedError,
+} from "../../filesystem/RegularFile.js";
 import type { FileHandle } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
 import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 
 import { classifyArtifactContent } from "./ArtifactGraphConstruction.js";
+import {
+  nesContainerFormat,
+  parseInesLayout,
+} from "../../domain/inesContainer.js";
 import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../ArtifactHash.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import {
@@ -71,7 +79,7 @@ export const classifyAndHashRoot = async (
   });
 };
 
-/** Classify a root and retain its admitted ZIP descriptor for child inventory. */
+/** Classify a root and retain its admitted container descriptor for child inventory. */
 export const classifyAndHashRootForInventory = async (
   path: string,
   directory: boolean,
@@ -104,7 +112,7 @@ export const classifyAndHashRootForInventory = async (
         "integrity",
         `Root artifact changed before inventory: ${path}`,
       );
-    const format = await classifyRootFormat(path, handle);
+    const format = await classifyRootFormat(path, handle, initial);
     const digest = await hashStableRootArtifactHandle(
       path,
       handle,
@@ -112,7 +120,9 @@ export const classifyAndHashRootForInventory = async (
       options.signal,
     );
     const retainSource =
-      isZipPackageFormat(format) || format === "mach-o-universal";
+      isZipPackageFormat(format) ||
+      format === "mach-o-universal" ||
+      format === "ines";
     outcome = {
       kind: "completed",
       value: {
@@ -124,7 +134,17 @@ export const classifyAndHashRootForInventory = async (
       },
     };
   } catch (cause: unknown) {
-    outcome = { kind: "failed", cause };
+    outcome = {
+      kind: "failed",
+      cause:
+        cause instanceof RegularFileChangedError
+          ? new ArtifactReaderFailure(
+              "integrity",
+              `Root artifact changed during inventory: ${path}`,
+              { cause: cause.cause ?? cause },
+            )
+          : cause,
+    };
   }
   if (outcome.kind === "failed" || outcome.value.rootSource === undefined) {
     const cleanupAttempt = await options.resourceScope.release(owner);
@@ -144,10 +164,17 @@ export const classifyAndHashRootForInventory = async (
 const classifyRootFormat = async (
   path: string,
   handle: FileHandle,
+  initial: Stats,
 ): Promise<ArtifactOccurrence["artifact_format"]> => {
   const magic = Buffer.alloc(ARTIFACT_CLASSIFICATION_PREFIX_BYTES);
   const observed = await handle.read(magic, 0, magic.length, 0);
+  await verifyRegularFileState(path, { handle, initial });
   const prefix = magic.subarray(0, observed.bytesRead);
+  if (nesContainerFormat(prefix) !== undefined) {
+    const parsed = parseInesLayout(prefix, initial.size);
+    if (!parsed.ok) throw new ArtifactReaderFailure("format", parsed.error);
+    return "ines";
+  }
   const lower = path.toLowerCase();
   if (hasZipSignature(prefix)) return zipRootPackageFormat(lower);
   if (

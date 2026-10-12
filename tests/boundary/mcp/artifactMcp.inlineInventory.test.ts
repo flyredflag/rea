@@ -1,3 +1,4 @@
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -266,7 +267,7 @@ const assertHistoricalInventory = async (
     {
       operation: "inventory_artifact",
       parameters: {},
-      result: legacyInventory,
+      result: jsonValueSchema.parse(legacyInventory),
     },
   );
   const legacyInspection = createArtifactInspection(legacySource);
@@ -490,7 +491,10 @@ it("keeps complete ZIP output and reads retained inventory views after the sourc
       {
         operation: "inventory_artifact",
         parameters: {},
-        result: { ...graph, occurrences: graph.occurrences.slice(0, 1) },
+        result: jsonValueSchema.parse({
+          ...graph,
+          occurrences: graph.occurrences.slice(0, 1),
+        }),
       },
     );
     const partialReply = await client.callTool({

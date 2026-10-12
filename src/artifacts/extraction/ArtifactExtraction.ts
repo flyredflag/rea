@@ -3,6 +3,11 @@ import { lstat, realpath } from "node:fs/promises";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
+import { InesArtifactReader } from "../InesArtifactReader.js";
+import {
+  openRootArtifact,
+  hashStableRootArtifactHandle,
+} from "../inventory/hashStableRootArtifact.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
@@ -216,7 +221,12 @@ const materializeSelection = async ({
   const byPath = new Map(
     selected.map((item) => [item.occurrence.logical_path, item]),
   );
-  const reader = await createReader(sourcePath, input);
+  const reader = await createReader(
+    sourcePath,
+    input,
+    inventory.manifest,
+    signal,
+  );
   const readerOwner: ArtifactResourceOwner = {
     kind: "reader" as const,
     reader,
@@ -421,6 +431,7 @@ const requireExtractableFormat = async (
   if (
     !directory &&
     format !== "asar" &&
+    format !== "ines" &&
     !isMachOFormat(format) &&
     !isZipFormat(format)
   )
@@ -436,10 +447,56 @@ const createReader = async (
   path: string,
   input: Pick<
     ArtifactExtractionInput,
-    "inputPath" | "inputFormat" | "environment"
+    "inputPath" | "inputFormat" | "environment" | "resourceScope"
   >,
+  manifest: ArtifactGraphManifest,
+  signal?: AbortSignal,
 ): Promise<ArtifactReader> => {
   const format = input.inputFormat;
+  // The scanned container determines admission; a replaced path cannot select
+  // a different reader. Bind the reopened descriptor to its observed bytes.
+  if (manifest.root_format === "ines") {
+    const owner = await openRootArtifact(
+      path,
+      input.resourceScope,
+      signal,
+      "inventoried",
+    );
+    try {
+      const initial = await owner.handle.stat();
+      const digest = await hashStableRootArtifactHandle(
+        path,
+        owner.handle,
+        initial,
+        signal,
+      );
+      if (digest.sha256 !== manifest.root_sha256)
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `Inventoried iNES source bytes changed: ${path}`,
+        );
+      return new InesArtifactReader(
+        path,
+        {
+          handle: owner.handle,
+          initial,
+        },
+        owner,
+      );
+    } catch (cause: unknown) {
+      const attempt = await input.resourceScope.release({
+        kind: "file-handle",
+        handle: owner,
+        resource: `iNES source ${path}`,
+      });
+      if (attempt.kind === "failed")
+        throw ArtifactReaderFailure.withCleanup(
+          cause,
+          ArtifactReaderFailure.cleanupObservation(attempt.cause, path),
+        );
+      throw cause;
+    }
+  }
   if (await requireExtractableFormat(path, input))
     return new DirectoryArtifactReader(path);
   if (format === "asar") return new AsarArtifactReader(path);

@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import type { BigIntStats, Stats } from "node:fs";
-import { open, type FileHandle } from "node:fs/promises";
+import { lstat, open, type FileHandle } from "node:fs/promises";
 
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
 
@@ -39,8 +39,11 @@ export class RegularFileAdmissionFailure extends Error {
 /** A regular input no longer matches the extent or identity admitted for reading. */
 export class RegularFileChangedError extends Error {
   readonly code = "ESTALE";
-  constructor(readonly path: string) {
-    super(`Selected input changed while being read: ${path}`);
+  constructor(
+    readonly path: string,
+    options?: ErrorOptions,
+  ) {
+    super(`Selected input changed while being read: ${path}`, options);
     this.name = "RegularFileChangedError";
   }
 }
@@ -50,6 +53,30 @@ export interface StableRegularFileDescriptor {
   readonly handle: FileHandle;
   readonly initial: Stats;
 }
+
+/** Revalidate admitted bytes before interpreting them, including lost path identity. */
+export const verifyRegularFileState = async (
+  path: string,
+  source: StableRegularFileDescriptor,
+): Promise<void> => {
+  const [opened, selected] = await Promise.all([
+    source.handle.stat(),
+    lstat(path).catch((cause: unknown) => {
+      if (
+        cause instanceof Error &&
+        "code" in cause &&
+        ["ENOENT", "ENOTDIR", "ELOOP"].includes(String(cause.code))
+      )
+        throw new RegularFileChangedError(path, { cause });
+      throw cause;
+    }),
+  ]);
+  if (
+    !sameRegularFileState(source.initial, opened) ||
+    !sameRegularFileState(source.initial, selected)
+  )
+    throw new RegularFileChangedError(path);
+};
 
 /** Open and verify the selected file descriptor without blocking on pipes. */
 export const openRegularFile = async (
