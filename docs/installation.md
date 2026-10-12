@@ -492,12 +492,17 @@ non-TTY, and JSON modes without applying configuration changes.
 
 Setup registers REA for the whole client. For Claude Code it writes
 `mcpServers.rea` in `~/.claude.json` and installs the bundled skill under
-`~/.claude/skills`, so every project that Claude Code opens can call REA. Some
-workflows need the opposite. A clean-room reimplementation separates the agent
-that studies the target from the agent that writes the new code, and the
-implementing side should have no route to REA or its output.
+`~/.claude/skills`, so every project that Claude Code opens can call REA. To
+offer REA's tools only where they're wanted, use one of the routes below.
 
-For Claude Code, use one of these.
+Both routes control which sessions discover REA's MCP server and skill. They
+don't isolate anything. An agent running under the same OS account can still
+run a `rea` command on the shell `PATH`, start REA with `npx`, and read the other
+profile's files and REA's output. Where the separation has to hold, as in a
+clean-room reimplementation, keep REA, the target, and REA's output in a separate
+OS account or container that the other agent's account can't read.
+
+For Claude Code:
 
 **A separate Claude Code profile.** Claude Code keeps settings, skills, session
 history, and its login under `CLAUDE_CONFIG_DIR`. Setup follows the same
